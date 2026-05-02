@@ -29,6 +29,9 @@ SAN_TYPE = (
     else "msan"
 )
 
+# PRE: if its a test where UB has been protected against put safe in the name
+EXPECT_SAFE = "safe" in INPUT_FILE.name.lower()
+
 def parse_sanitiser_output(output):
     # regex looks for a filename ending in h, c, cc, cpp, or hip, followed by :line:col
     source_loc_pattern = r"([^/\s]+\.(?:h|c|cc|cpp|hip|hpp):\d+(?::\d+)?)"
@@ -107,14 +110,25 @@ def main():
         
         combined_out = res.stdout + res.stderr
         
-        if (res.returncode != 0):
-            # non-zero exit code so sanitiser hopefully has worked
-            summary = parse_sanitiser_output(combined_out)
-            print(f"{GREEN}[PASS]{RESET} {summary}")
-            sys.exit(0) 
+        
+        if EXPECT_SAFE:
+            # these tests should not have any UB firing 
+            if res.returncode == 0:
+                print(f"{GREEN}[PASS]{RESET} no UB found")
+                sys.exit(0)
+            else:
+                summary = parse_sanitiser_output(combined_out)
+                print(f"{RED}[FAIL]{RESET} {INPUT_FILE.name} UB found: {summary}")
+                sys.exit(1)
         else:
-            print(f"{RED}[FAIL]{RESET} {INPUT_FILE.name} (No sanitizer error detected)")
-            sys.exit(1) 
+            if res.returncode != 0:
+                # We expect to find UB here the sanitiser fired correctly
+                summary = parse_sanitiser_output(combined_out)
+                print(f"{GREEN}[PASS]{RESET} {summary}")
+                sys.exit(0) 
+            else:
+                print(f"{RED}[FAIL]{RESET} {INPUT_FILE.name} (No sanitizer error detected)")
+                sys.exit(1) 
             
     except subprocess.TimeoutExpired:
         print(f"{RED}[TIMEOUT]{RESET}", file=sys.stderr)
