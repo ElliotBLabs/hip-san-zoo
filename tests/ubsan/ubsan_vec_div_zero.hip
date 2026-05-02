@@ -2,13 +2,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
-// ubsan_shift_oob.cpp
-// Compile: clang++ -fsanitize=undefined -g ubsan_shift_oob.cpp
 __device__ void hipsmith_kernel_logic(int argc, char **argv)
 {
-    int x = 1;
-    x <<= 32; // BOOM: shift-out-of-bounds (shifting >= bit width)
-    int y = x;
+    int zero = argc - 1; // 0 if run with no args
+
+    int4 v_a = make_int4(10, 20, 30, 40);
+    int4 v_b = make_int4(zero, 2, 2, 2);
+    int4 v_res = v_a / v_b;
     return;
 }
 

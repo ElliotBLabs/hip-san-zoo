@@ -2,29 +2,59 @@
 import subprocess
 import sys
 import os
+import re
 from pathlib import Path
 
-# ANSI color codes
+# Fun colour codes for output
 GREEN = '\033[92m'
 RED = '\033[91m'
 RESET = '\033[0m'
+YELLOW = '\033[93m' 
+CYAN = '\033[96m' 
 
-# Get the current working directory
 WORK_DIR = Path.cwd()
 
-# input file as a command line arg
+# the test to conduct on
 INPUT_FILE = Path(sys.argv[1]).resolve()
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 HIP_CPU_DIR = SCRIPT_DIR / "hip-cpu"
 HIP_CPU_INCLUDE = HIP_CPU_DIR / "include"
 MSAN_IGNORE_LIST = SCRIPT_DIR / "msan_ignore.txt"
 
-# expect san type name in the name of the test
+# PRE: sanitiser type name in the name of the test
 SAN_TYPE = (
     "asan" if "asan" in INPUT_FILE.name.lower()
     else "ubsan" if "ubsan" in INPUT_FILE.name.lower()
     else "msan"
 )
+
+def parse_sanitiser_output(output):
+    # regex looks for a filename ending in h, c, cc, cpp, or hip, followed by :line:col
+    source_loc_pattern = r"([^/\s]+\.(?:h|c|cc|cpp|hip|hpp):\d+(?::\d+)?)"
+
+    for line in output.splitlines():
+        # UBSan useful reporting is of the form 'runtime error: XXXXX'
+        if "runtime error:" in line:
+            ub_desc = line.split("runtime error:")[1].strip()
+
+            # line of interest on the same line
+            loc_match = re.search(source_loc_pattern, line)
+            loc_str = f" at {YELLOW}{loc_match.group(1)}{RESET}" if loc_match else ""
+            return f"{CYAN}UBSan:{RESET} {ub_desc}{loc_str}"
+
+        # MSan and ASan useful reporting is of the form '{Address|Memory}Sanitizer: XXXXX'
+        san_match = re.search(r"(AddressSanitizer|MemorySanitizer):\s*([\w-]+)", line)
+        if san_match:
+            san_name = "ASan" if "Address" in san_match.group(1) else "MSan"
+            
+            # M/ASan usually puts the location on a different line so rescan whole thing
+            loc_match = re.search(source_loc_pattern, output)
+            loc_str = f" at {YELLOW}{loc_match.group(1)}{RESET}" if loc_match else ""
+            
+            return f"{CYAN}{san_name}:{RESET} {san_match.group(2)}{loc_str}"
+
+    return "Sanitiser triggered (no useful summary found)"
 
 def main():
     # compile with hip-cpu
@@ -33,14 +63,14 @@ def main():
     # SANITIZER flags
     # fno-sanitize-recover=all: crash as soon as a sanitizer 
     # halt_on_error/abort_on_error: stop and crash on sanitizer detection
-    # 1. ASAN:
+    # ASAN:
     #    - fsanitize=address: run with asan
     #    - detect_leaks=0: disables LeakSanitizer memory leaks are ok
     #
-    # 2. UBSAN:
+    # UBSAN:
     #    - fsanitize=undefined: run with ubsan
     #
-    # 3. MSAN:
+    # MSAN:
     #    - fsanitize=memory: run with msan
     #    - fsanitize-ignorelist: if MSAN triggers here ignore it, for example an external library we do not care about testing
     configs = {
@@ -76,24 +106,21 @@ def main():
         res = subprocess.run([bin_path], capture_output=True, text=True, timeout=10, env=env)
         
         combined_out = res.stdout + res.stderr
-        out_lower = combined_out.lower()
         
         if (res.returncode != 0):
-            # non-zero exit code so sanitizer hopefully has worked
-            for line in combined_out.splitlines():
-                if "sanitizer" in line.lower():
-                    relevant_line = line.strip()
-                    break
-            
-            print(f"{GREEN}[PASS]{RESET} {relevant_line}")
+            # non-zero exit code so sanitiser hopefully has worked
+            summary = parse_sanitiser_output(combined_out)
+            print(f"{GREEN}[PASS]{RESET} {summary}")
             sys.exit(0) 
         else:
+            print(f"{RED}[FAIL]{RESET} {INPUT_FILE.name} (No sanitizer error detected)")
             sys.exit(1) 
             
     except subprocess.TimeoutExpired:
         print(f"{RED}[TIMEOUT]{RESET}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
+        print(f"{RED}[SCRIPT ERROR]{RESET} {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
