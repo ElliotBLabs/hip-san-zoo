@@ -22,7 +22,6 @@ __host__ __device__ constexpr bool check_safe_rshift(ProxyT a_in, ProxyT b_in)
     if constexpr (std::is_signed_v<BaseT>)
     {
         // cannot shift by negative
-        // the a < 0 check might not be needed in cpp20
         if (b < 0 || a < 0)
             return false;
     }
